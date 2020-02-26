@@ -16,6 +16,7 @@ type Profile struct {
 type ProfileTable struct {
 	mapUser      map[string]*Profile
 	mapUserEmail map[string]*Profile
+	sessions     map[string]string // [token]login
 	mu           sync.RWMutex
 	nextID       uint
 }
@@ -25,6 +26,7 @@ func NewProfileTable() *ProfileTable {
 		mu:           sync.RWMutex{},
 		mapUser:      make(map[string]*Profile), // fast login
 		mapUserEmail: make(map[string]*Profile), // fast email
+		sessions:     make(map[string]string),
 	}
 }
 
@@ -51,7 +53,7 @@ func (profTable *ProfileTable) AddProfile(newUser *Profile) (uint, error) {
 	profTable.mapUserEmail[newUser.email] = newUser
 	profTable.mu.Unlock()
 
-	println("After add new User:")
+	println("After add new User. Users:")
 	showUsers(profTable)
 	println("===================")
 
@@ -67,4 +69,12 @@ func (profTable *ProfileTable) SignIn(email string, password string) (uint, stri
 		return user.id, user.login, nil
 	}
 	return 0, "", errors.New("wrong password")
+}
+
+func (profTable *ProfileTable) GetUserDataFromTable(login string) (*Profile, error) {
+	user, exist := profTable.mapUser[login]
+	if exist != true {
+		return nil, errors.New("not have this user")
+	}
+	return user, nil
 }

@@ -2,9 +2,9 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"time"
@@ -66,8 +66,7 @@ func (api *ProfileHandler) Registration(w http.ResponseWriter, r *http.Request) 
 
 	id, err := api.profileTable.AddProfile(newUser)
 	if err != nil {
-		http.Error(w, `{"id":"-500"}`, 500)
-		// если пользователь уже есть то это уж не ошибка сервера
+		http.Error(w, `{"id":"-400"}`, 400)   // пользоатель уже есть
 		return
 	}
 
@@ -99,14 +98,16 @@ func (api *ProfileHandler) Registration(w http.ResponseWriter, r *http.Request) 
 	w.Write(jsonData)
 }
 
-func addCookie(w *http.ResponseWriter, name string, value string) {
-	expire := time.Now().AddDate(0, 0, 1)
-	cookie := http.Cookie{
-		Name:    name,
-		Value:   value,
-		Expires: expire,
+var (
+	letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+)
+
+func RandStringRunes(n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
 	}
-	http.SetCookie(*w, &cookie)
+	return string(b)
 }
 
 func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +124,7 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		println("SIGN IN: err Read user body")
 		isOK = false
 	}
-
+	w.Header().Set("Content-Type", "application/json")
 	type SignInInput struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -137,28 +138,45 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	println("TRY LOGIN:", signInTry.Email, signInTry.Password)
-	userId, userLogin, err := api.profileTable.SignIn(signInTry.Email, signInTry.Password)
+	_, userLogin, err := api.profileTable.SignIn(signInTry.Email, signInTry.Password)
 	if err != nil {
 		println("SIGN IN: err check (email password)")
 		isOK = false
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	if !isOK {
 		http.Error(w, `{"id":"-500"}`, 500)
+		println("error set cookie")
 		return
 	}
 
-	//@todo сессия
-	addCookie(&w, "TestCookieName", "TestValue")
+	SID := RandStringRunes(32)
 
-	answer := Answer{
-		Id:    strconv.Itoa(int(userId)),
-		Login: userLogin,
+	api.profileTable.sessions[SID] = userLogin
+
+	cookie := &http.Cookie{
+		Name:     "session_id",
+		Value:    SID,
+		Expires:  time.Now().Add(10 * time.Hour),
+		HttpOnly: true,
 	}
-	jsonData, err := json.Marshal(answer)
-	if err != nil {
-		log.Println(err)
+	println("SET:", cookie.Name, "=", cookie.Value)
+	http.SetCookie(w, cookie)
+
+	type AnswerLogin struct {
+		Login string `json:"login"`
+	}
+
+	answerLogin := new(AnswerLogin)
+	answerLogin.Login = userLogin
+	jsonData, err := json.Marshal(answerLogin)
+	if err != nil && !isOK {
+		println("Err singIN marshal")
+		isOK = false
+	}
+	if !isOK {
+		http.Error(w, `{"id":"-500"}`, 500)
+		return
 	}
 	w.Write(jsonData)
 }
@@ -168,13 +186,89 @@ func (api *ProfileHandler) LogOut(w http.ResponseWriter, r *http.Request) {
 	if (*r).Method != "POST" {
 		return
 	}
-	println("Кто-то пытается выйти из матрицы")
 
+	session, err := r.Cookie("session_id")
+	if err == http.ErrNoCookie {
+		http.Error(w, `no session`, 401)
+		return
+	}
+
+	if _, ok := api.profileTable.sessions[session.Value]; !ok {
+		http.Error(w, `no sess`, 401)
+		return
+	}
+
+	delete(api.profileTable.sessions, session.Value)
+
+	session.Expires = time.Now().AddDate(0, 0, -1) //@todo add err check
+	http.SetCookie(w, session)
 }
 
-func (api *ProfileHandler) HelloGo(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
-	fmt.Fprintln(w, method, r.URL.String(), "hello")
+func (api *ProfileHandler) isAuthorize(r *http.Request) bool {
+	authorized := false
+	session, err := r.Cookie("session_id")
+	if err == nil && session != nil {
+		_, authorized = api.profileTable.sessions[session.Value]
+	}
+	return authorized
+}
+
+func (api *ProfileHandler) GetUserData(w http.ResponseWriter, r *http.Request) {
+	enableCors(&w)
+	if (*r).Method != "POST" {
+		return
+	}
+
+	println("Запрос данных пользователя")
+	type UserDataAnswer struct {
+		Exist bool   `json:"status"`
+		Id    uint   `json:"id"`
+		Login string `json:"login"`
+		Email string `json:"email"`
+	}
+
+	type UserDataRequest struct {
+		Login string `json:"login"`
+	}
+
+	authorized := api.isAuthorize(r)
+	if !authorized {
+		http.Error(w, ``, 403)
+		return
+	}
+
+	isOK := true
+	body, errRead := ioutil.ReadAll(r.Body)
+	if errRead != nil {
+		println("GetUserData IN: err Read user body")
+		isOK = false
+	}
+
+	println("BODY GET DATA:", string(body))
+	userRequested := new(UserDataRequest)
+	errUnmarshal := json.Unmarshal(body, userRequested)
+	if errUnmarshal != nil {
+		println("profile: err Unmarshal user login")
+		isOK = false
+	}
+
+	userAnswer := new(UserDataAnswer)
+	user, userDataErr := api.profileTable.GetUserDataFromTable(userRequested.Login)
+	if userDataErr != nil {
+		userAnswer.Exist = false
+	} else {
+		userAnswer.Exist = true
+		userAnswer.Id = user.id
+		userAnswer.Login = user.login
+		userAnswer.Email = user.email
+	}
+	println("return user data::login:", userAnswer.Login)
+	jsonData, err := json.Marshal(userAnswer)
+	if err != nil && !isOK {
+		log.Println(err)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonData)
 }
 
 /* Использовалось чтобы отдавать статику пока нет nginx
@@ -277,6 +371,7 @@ func main() {
 	r.HandleFunc("/registration", api.Registration)
 	r.HandleFunc("/signin", api.SignIn)
 	r.HandleFunc("/logout", api.LogOut)
+	r.HandleFunc("/getuser", api.GetUserData)
 
 	log.Println("start serving :8080")
 	errListen := http.ListenAndServe(":8080", r)
