@@ -330,101 +330,13 @@ func (api *ProfileHandler) ChangeProfile(w http.ResponseWriter, r *http.Request)
 	w.Write(jsonData)
 }
 
-/* Использовалось чтобы отдавать статику пока нет nginx
-func (api *ProfileHandler) GetMainPage(w http.ResponseWriter, r *http.Request) {
-	w.Write(mainPage)
-}
-
-func (api *ProfileHandler) GetMainCss(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/css")
-	w.Write(mainCss)
-}
-
-func (api *ProfileHandler) GetMainJs(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/javascript")
-	w.Write(mainJs)
-}
-
-func (api *ProfileHandler) GetMainAjaxJs(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/javascript")
-	w.Write(mainAjax)
-}
-
-var mainPage []byte
-var mainCss []byte
-var mainJs []byte
-var mainAjax []byte
-
-func readMainPages() {
-	// mian page
-	var mainPagePath = "../public/index.html"
-	file, err := os.Open(mainPagePath)
-	if err != nil {
-		log.Fatal("Error: Not valid file name")
-	}
-	defer file.Close()
-	mainPage, err = ioutil.ReadAll(file)
-	if err != nil {
-		log.Fatal("Error: Read error")
-	}
-
-	// main css
-	var mainPageCssPath = "../public/main.css"
-	fileCss, err := os.Open(mainPageCssPath)
-	if err != nil {
-		log.Fatal("Error: Not valid file name")
-	}
-	defer fileCss.Close()
-	mainCss, err = ioutil.ReadAll(fileCss)
-	if err != nil {
-		log.Fatal("Error: Read error")
-	}
-
-	// main js
-	var mainPageJsPath = "../public/main.js"
-	fileJs, err := os.Open(mainPageJsPath)
-	if err != nil {
-		log.Fatal("Error: Not valid file name")
-	}
-	defer fileJs.Close()
-	mainJs, err = ioutil.ReadAll(fileJs)
-	if err != nil {
-		log.Fatal("Error: Read error")
-	}
-
-	// main js
-	var mainPageAjaxPath = "../public/modules/ajax.js"
-	fileJsAjax, err := os.Open(mainPageAjaxPath)
-	if err != nil {
-		log.Fatal("Error: Not valid file name")
-	}
-	defer fileJs.Close()
-	mainAjax, err = ioutil.ReadAll(fileJsAjax)
-	if err != nil {
-		log.Fatal("Error: Read error")
-	}
-}
-*/
-
 func main() {
-
-	// before server starts, читаем 1 раз, помним всегда
-	//readMainPages() // возможна паника но узнаем сразу до старта сервера
 
 	r := mux.NewRouter()
 
 	api := &ProfileHandler{
 		profileTable: NewProfileTable(),
 	}
-
-	/* пока нет nginx статику отдаем сами
-	r.HandleFunc("/", api.GetMainPage)
-	r.HandleFunc("/index{*}", api.GetMainPage)
-
-	r.HandleFunc("/main.css", api.GetMainCss)
-	r.HandleFunc("/main.js", api.GetMainJs)
-	r.HandleFunc("/modules/ajax.js", api.GetMainAjaxJs)
-	*/
 
 	// js api
 	r.HandleFunc("/registration", api.Registration)
