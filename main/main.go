@@ -16,12 +16,15 @@ type ProfileHandler struct {
 	profileTable *ProfileTable
 }
 
-func enableCors(w *http.ResponseWriter) {
-	allowedHeaders := "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization"
-	(*w).Header().Set("Content-Type", "*")
-	(*w).Header().Set("Access-Control-Allow-Headers", allowedHeaders)
-	(*w).Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
-	(*w).Header().Set("Access-Control-Allow-Credentials", "true")
+func CORSMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		allowedHeaders := "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization"
+		w.Header().Set("Content-Type", "*")
+		w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		next.ServeHTTP(w, r)
+	})
 }
 
 type Answer struct {
@@ -29,14 +32,19 @@ type Answer struct {
 	Login string `json:"login"`
 }
 
-func (api *ProfileHandler) Registration(w http.ResponseWriter, r *http.Request) {
+func checkRegist(login string, password string) bool {
+	if len(login) < 4 || len(password) < 4 {
+		return false
+	} // @todo add more check
+	return true
+}
 
-	enableCors(&w)
+func (api *ProfileHandler) Registration(w http.ResponseWriter, r *http.Request) {
 	if (*r).Method != "POST" {
 		return
 	}
-	println("Кто-то пытается зарегистрироваться")
 
+	println("Кто-то пытается зарегистрироваться")
 	isOK := true
 
 	body, errRead := ioutil.ReadAll(r.Body)
@@ -58,9 +66,14 @@ func (api *ProfileHandler) Registration(w http.ResponseWriter, r *http.Request) 
 		isOK = false
 	}
 
+	if !checkRegist(newRegistrationInput.Login, newRegistrationInput.Password) {
+		http.Error(w, `{"id":"-400"}`, 400) // неверный ввод
+		return
+	}
+
 	newUser := &Profile{
 		login:    newRegistrationInput.Login,
-		password: newRegistrationInput.Password,
+		password: newRegistrationInput.Password, //@todo hash()
 		email:    newRegistrationInput.Email,
 	}
 
@@ -111,7 +124,6 @@ func RandStringRunes(n int) string {
 }
 
 func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
-	enableCors(&w)
 	if (*r).Method != "POST" {
 		return
 	}
@@ -137,7 +149,7 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		isOK = false
 	}
 
-	println("TRY LOGIN:", signInTry.Email, signInTry.Password)
+	println("TRY LOGIN:", signInTry.Email, signInTry.Password) //@todo hash password
 	user, err := api.profileTable.SignIn(signInTry.Email, signInTry.Password)
 	if err != nil {
 		println("SIGN IN: err check (email password)")
@@ -190,7 +202,6 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *ProfileHandler) LogOut(w http.ResponseWriter, r *http.Request) {
-	enableCors(&w)
 	if (*r).Method != "POST" {
 		return
 	}
@@ -224,7 +235,6 @@ func (api *ProfileHandler) isAuthorize(r *http.Request) (bool, string) {
 }
 
 func (api *ProfileHandler) GetUserData(w http.ResponseWriter, r *http.Request) {
-	enableCors(&w)
 	if (*r).Method != "POST" {
 		return
 	}
@@ -262,13 +272,14 @@ func (api *ProfileHandler) GetUserData(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *ProfileHandler) ChangeProfile(w http.ResponseWriter, r *http.Request) {
-	enableCors(&w)
 	if (*r).Method != "POST" {
 		return
 	}
+	println("Кто-то меняет профиль")
 
 	authorized, userlogin := api.isAuthorize(r)
 	if !authorized {
+		println("Неавторизированный пользователь пытается менять что-то")
 		http.Error(w, ``, 403)
 		return
 	}
@@ -297,14 +308,10 @@ func (api *ProfileHandler) ChangeProfile(w http.ResponseWriter, r *http.Request)
 		println("SIGN IN: err Unmarshal user body")
 		isOK = false
 	}
-
-	if ChangeTry.Email != api.profileTable.mapUserEmail[userlogin].email {
-		http.Error(w, ``, 403) // меняет не себя
-		return
-	}
-
+	println("Изменить логин на", ChangeTry.Email)
 	changedUser, errChange := api.profileTable.ChangeProfile(userlogin, ChangeTry.Password, ChangeTry.Email)
 	if errChange != nil {
+		println("Profile: Новая почта занята")
 		http.Error(w, ``, 503) // новый email занят
 		return
 	}
@@ -313,6 +320,7 @@ func (api *ProfileHandler) ChangeProfile(w http.ResponseWriter, r *http.Request)
 	newUserAnswer.Email = changedUser.email
 	newUserAnswer.Id = changedUser.id
 
+	println("Изменили логин на", newUserAnswer.Login)
 	jsonData, err := json.Marshal(newUserAnswer)
 	if err != nil || !isOK {
 		log.Println(err)
@@ -424,8 +432,9 @@ func main() {
 	r.HandleFunc("/logout", api.LogOut)
 	r.HandleFunc("/getuser", api.GetUserData)
 	r.HandleFunc("/changeprofile", api.ChangeProfile)
+
 	log.Println("start serving :8080")
-	errListen := http.ListenAndServe(":8080", r)
+	errListen := http.ListenAndServe(":8080", CORSMiddleware(r))
 	if errListen != nil {
 		log.Fatal("Error: Not Listen")
 	}

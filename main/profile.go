@@ -82,34 +82,34 @@ func (profTable *ProfileTable) GetUserDataFromTableByLogin(login string) (*Profi
 func (profTable *ProfileTable) ChangeProfile(login string, newPassword string, newEmail string) (*Profile, error) {
 	user, exist := profTable.mapUser[login]
 	if exist != true {
+		println("попытка поменять не себя")
 		return nil, errors.New("not have this user")
 	}
-	var newUser *Profile
+	var newUser = new(Profile)
 	var email = user.email
 	newUser.id = user.id
+	newUser.password = user.password
+	newUser.login = user.login
+	newUser.email = user.email
 
-	if newEmail != "" {
-
+	if newEmail != profTable.mapUser[login].email {
+		println("change email")
 		email = user.email
 		_, existNewEmail := profTable.mapUserEmail[newEmail] // вдруг у кого-то уже есть такой email
 		if existNewEmail {
+			println("Уже есть такая почта")
 			return nil, errors.New("already have new email")
 		}
-		newUser = new(Profile)
-		newUser.id = user.id
-		newUser.password = user.password
 		newUser.email = newEmail
-		newUser.login = user.login
-
 		profTable.mapUser[login].email = newEmail
 		profTable.mapUserEmail[newEmail] = newUser
 		delete(profTable.mapUserEmail, email)
 	}
 
 	if newPassword != "" {
-
+		println("change password")
 		profTable.mapUser[login].password = newPassword
-		profTable.mapUserEmail[email].password = newPassword
+		profTable.mapUserEmail[newEmail].password = newPassword
 		newUser.password = newPassword
 
 	}
