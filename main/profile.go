@@ -60,21 +60,58 @@ func (profTable *ProfileTable) AddProfile(newUser *Profile) (uint, error) {
 	return newUser.id, nil
 }
 
-func (profTable *ProfileTable) SignIn(email string, password string) (uint, string, error) {
+func (profTable *ProfileTable) SignIn(email string, password string) (*Profile, error) {
 	user, exist := profTable.mapUserEmail[email]
 	if exist != true {
-		return 0, "", errors.New("don't have that user")
+		return nil, errors.New("don't have that user")
 	}
 	if user.password == password {
-		return user.id, user.login, nil
+		return user, nil
 	}
-	return 0, "", errors.New("wrong password")
+	return nil, errors.New("wrong password")
 }
 
-func (profTable *ProfileTable) GetUserDataFromTable(login string) (*Profile, error) {
+func (profTable *ProfileTable) GetUserDataFromTableByLogin(login string) (*Profile, error) {
 	user, exist := profTable.mapUser[login]
 	if exist != true {
 		return nil, errors.New("not have this user")
 	}
 	return user, nil
+}
+
+func (profTable *ProfileTable) ChangeProfile(login string, newPassword string, newEmail string) (*Profile, error) {
+	user, exist := profTable.mapUser[login]
+	if exist != true {
+		return nil, errors.New("not have this user")
+	}
+	var newUser *Profile
+	var email = user.email
+	newUser.id = user.id
+
+	if newEmail != "" {
+
+		email = user.email
+		_, existNewEmail := profTable.mapUserEmail[newEmail] // вдруг у кого-то уже есть такой email
+		if existNewEmail {
+			return nil, errors.New("already have new email")
+		}
+		newUser = new(Profile)
+		newUser.id = user.id
+		newUser.password = user.password
+		newUser.email = newEmail
+		newUser.login = user.login
+
+		profTable.mapUser[login].email = newEmail
+		profTable.mapUserEmail[newEmail] = newUser
+		delete(profTable.mapUserEmail, email)
+	}
+
+	if newPassword != "" {
+
+		profTable.mapUser[login].password = newPassword
+		profTable.mapUserEmail[email].password = newPassword
+		newUser.password = newPassword
+
+	}
+	return newUser, nil
 }

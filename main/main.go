@@ -66,7 +66,7 @@ func (api *ProfileHandler) Registration(w http.ResponseWriter, r *http.Request) 
 
 	id, err := api.profileTable.AddProfile(newUser)
 	if err != nil {
-		http.Error(w, `{"id":"-400"}`, 400)   // пользоатель уже есть
+		http.Error(w, `{"id":"-400"}`, 400) // пользоатель уже есть
 		return
 	}
 
@@ -138,7 +138,7 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	println("TRY LOGIN:", signInTry.Email, signInTry.Password)
-	_, userLogin, err := api.profileTable.SignIn(signInTry.Email, signInTry.Password)
+	user, err := api.profileTable.SignIn(signInTry.Email, signInTry.Password)
 	if err != nil {
 		println("SIGN IN: err check (email password)")
 		isOK = false
@@ -152,7 +152,7 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 
 	SID := RandStringRunes(32)
 
-	api.profileTable.sessions[SID] = userLogin
+	api.profileTable.sessions[SID] = user.login
 
 	cookie := &http.Cookie{
 		Name:     "session_id",
@@ -164,11 +164,16 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, cookie)
 
 	type AnswerLogin struct {
+		Exist bool   `json:"status"` // not use yet
+		Id    uint   `json:"id"`
 		Login string `json:"login"`
+		Email string `json:"email"`
 	}
 
 	answerLogin := new(AnswerLogin)
-	answerLogin.Login = userLogin
+	answerLogin.Login = user.login
+	answerLogin.Email = user.email
+	answerLogin.Id = user.id
 	jsonData, err := json.Marshal(answerLogin)
 	if err != nil && !isOK {
 		println("Err singIN marshal")
@@ -178,7 +183,10 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"id":"-500"}`, 500)
 		return
 	}
-	w.Write(jsonData)
+	_, errWrite := w.Write(jsonData)
+	if errWrite != nil {
+		println("Err write in Login")
+	}
 }
 
 func (api *ProfileHandler) LogOut(w http.ResponseWriter, r *http.Request) {
@@ -202,15 +210,17 @@ func (api *ProfileHandler) LogOut(w http.ResponseWriter, r *http.Request) {
 
 	session.Expires = time.Now().AddDate(0, 0, -1) //@todo add err check
 	http.SetCookie(w, session)
+	println("delete cookie")
 }
 
-func (api *ProfileHandler) isAuthorize(r *http.Request) bool {
+func (api *ProfileHandler) isAuthorize(r *http.Request) (bool, string) {
 	authorized := false
+	var login string
 	session, err := r.Cookie("session_id")
 	if err == nil && session != nil {
-		_, authorized = api.profileTable.sessions[session.Value]
+		login, authorized = api.profileTable.sessions[session.Value]
 	}
-	return authorized
+	return authorized, login
 }
 
 func (api *ProfileHandler) GetUserData(w http.ResponseWriter, r *http.Request) {
@@ -219,53 +229,94 @@ func (api *ProfileHandler) GetUserData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	println("Запрос данных пользователя")
 	type UserDataAnswer struct {
-		Exist bool   `json:"status"`
 		Id    uint   `json:"id"`
 		Login string `json:"login"`
 		Email string `json:"email"`
 	}
 
-	type UserDataRequest struct {
-		Login string `json:"login"`
-	}
-
-	authorized := api.isAuthorize(r)
+	authorized, userlogin := api.isAuthorize(r)
 	if !authorized {
 		http.Error(w, ``, 403)
 		return
 	}
 
-	isOK := true
-	body, errRead := ioutil.ReadAll(r.Body)
-	if errRead != nil {
-		println("GetUserData IN: err Read user body")
-		isOK = false
-	}
-
-	println("BODY GET DATA:", string(body))
-	userRequested := new(UserDataRequest)
-	errUnmarshal := json.Unmarshal(body, userRequested)
-	if errUnmarshal != nil {
-		println("profile: err Unmarshal user login")
-		isOK = false
-	}
-
 	userAnswer := new(UserDataAnswer)
-	user, userDataErr := api.profileTable.GetUserDataFromTable(userRequested.Login)
+	user, userDataErr := api.profileTable.GetUserDataFromTableByLogin(userlogin)
 	if userDataErr != nil {
-		userAnswer.Exist = false
+		http.Error(w, ``, 403)
+		return
 	} else {
-		userAnswer.Exist = true
 		userAnswer.Id = user.id
 		userAnswer.Login = user.login
 		userAnswer.Email = user.email
 	}
 	println("return user data::login:", userAnswer.Login)
 	jsonData, err := json.Marshal(userAnswer)
-	if err != nil && !isOK {
+	if err != nil {
 		log.Println(err)
+		http.Error(w, ``, 500)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonData)
+}
+
+func (api *ProfileHandler) ChangeProfile(w http.ResponseWriter, r *http.Request) {
+	enableCors(&w)
+	if (*r).Method != "POST" {
+		return
+	}
+
+	authorized, userlogin := api.isAuthorize(r)
+	if !authorized {
+		http.Error(w, ``, 403)
+		return
+	}
+
+	type UserDataAnswer struct {
+		Id    uint   `json:"id"`
+		Login string `json:"login"`
+		Email string `json:"email"`
+	}
+
+	isOK := true
+	body, errRead := ioutil.ReadAll(r.Body)
+	if errRead != nil {
+		println("SIGN IN: err Read user body")
+		isOK = false
+	}
+
+	type ChangeInput struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	ChangeTry := new(ChangeInput)
+	errUnmarshal := json.Unmarshal(body, ChangeTry)
+	if errUnmarshal != nil {
+		println("SIGN IN: err Unmarshal user body")
+		isOK = false
+	}
+
+	if ChangeTry.Email != api.profileTable.mapUserEmail[userlogin].email {
+		http.Error(w, ``, 403) // меняет не себя
+		return
+	}
+
+	changedUser, errChange := api.profileTable.ChangeProfile(userlogin, ChangeTry.Password, ChangeTry.Email)
+	if errChange != nil {
+		http.Error(w, ``, 503) // новый email занят
+		return
+	}
+	newUserAnswer := new(UserDataAnswer)
+	newUserAnswer.Login = changedUser.login
+	newUserAnswer.Email = changedUser.email
+	newUserAnswer.Id = changedUser.id
+
+	jsonData, err := json.Marshal(newUserAnswer)
+	if err != nil || !isOK {
+		log.Println(err)
+		http.Error(w, ``, 500)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(jsonData)
@@ -372,7 +423,7 @@ func main() {
 	r.HandleFunc("/signin", api.SignIn)
 	r.HandleFunc("/logout", api.LogOut)
 	r.HandleFunc("/getuser", api.GetUserData)
-
+	r.HandleFunc("/changeprofile", api.ChangeProfile)
 	log.Println("start serving :8080")
 	errListen := http.ListenAndServe(":8080", r)
 	if errListen != nil {
