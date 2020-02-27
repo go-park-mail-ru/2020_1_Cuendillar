@@ -111,7 +111,6 @@ func (profTable *ProfileTable) ChangeProfile(login string, newPassword string, n
 		profTable.mapUser[login].password = newPassword
 		profTable.mapUserEmail[newEmail].password = newPassword
 		newUser.password = newPassword
-
 	}
 	return newUser, nil
 }
