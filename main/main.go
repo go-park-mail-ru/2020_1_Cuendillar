@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"time"
@@ -186,6 +188,7 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	answerLogin.Login = user.login
 	answerLogin.Email = user.email
 	answerLogin.Id = user.id
+	answerLogin.Exist = true
 	jsonData, err := json.Marshal(answerLogin)
 	if err != nil && !isOK {
 		println("Err singIN marshal")
@@ -330,7 +333,55 @@ func (api *ProfileHandler) ChangeProfile(w http.ResponseWriter, r *http.Request)
 	w.Write(jsonData)
 }
 
+func (api *ProfileHandler) saveFile(w http.ResponseWriter, file multipart.File, userLogin string) {
+	data, err := ioutil.ReadAll(file)
+	if err != nil {
+		fmt.Fprintf(w, "%v", err)
+		return
+	}
+	err = ioutil.WriteFile("./avatars/"+userLogin+"ava.png", data, 0666) // user format
+	if err != nil {
+		fmt.Fprintf(w, "%v", err)
+		return
+	}
+
+}
+
+func (api *ProfileHandler) GetAvatarFromUser(w http.ResponseWriter, r *http.Request) {
+	if (*r).Method != "POST" {
+		return
+	}
+	println("Кто-то загружает аватар")
+
+	/* кука не идет вместе с фоткой
+	authorized, userlogin := api.isAuthorize(r)
+	if !authorized {
+		http.Error(w, ``, 403)
+		return
+	}
+	*/
+
+	userlogin := "userNameFromCookie"
+	println(userlogin, " загружает аватар")
+
+	r.ParseMultipartForm(10000)
+	fileAvatar, _, errFirmFile := r.FormFile("avatar")
+	if errFirmFile != nil {
+		println("ERROR:", string(errFirmFile.Error()))
+		http.Error(w, ``, 405)
+		return
+	}
+
+	api.saveFile(w, fileAvatar, userlogin)
+	defer fileAvatar.Close()
+
+	println("END WRITE FILE!")
+
+}
+
 func main() {
+
+	//@todo  Добавить риид онли мютексы на только чтение
 
 	r := mux.NewRouter()
 
@@ -344,6 +395,8 @@ func main() {
 	r.HandleFunc("/logout", api.LogOut)
 	r.HandleFunc("/getuser", api.GetUserData)
 	r.HandleFunc("/changeprofile", api.ChangeProfile)
+
+	r.HandleFunc("/getavatar", api.GetAvatarFromUser)
 
 	log.Println("start serving :8080")
 	errListen := http.ListenAndServe(":8080", CORSMiddleware(r))
