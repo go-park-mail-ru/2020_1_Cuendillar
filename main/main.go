@@ -1,13 +1,17 @@
 package main
 
 import (
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -16,6 +20,7 @@ import (
 
 type ProfileHandler struct {
 	profileTable *ProfileTable
+	taskTable    *TaskTable
 }
 
 func CORSMiddleware(next http.Handler) http.Handler {
@@ -125,6 +130,13 @@ func RandStringRunes(n int) string {
 	return string(b)
 }
 
+func shaHash(bv []byte) string {
+	hasher := sha1.New()
+	hasher.Write(bv)
+	sha := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
+	return sha
+}
+
 func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	if (*r).Method != "POST" {
 		return
@@ -176,6 +188,12 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	}
 	println("SET:", cookie.Name, "=", cookie.Value)
 	http.SetCookie(w, cookie)
+
+	someSecret := "hello world=)"
+	token := shaHash([]byte(cookie.Value + user.email + someSecret))
+
+	api.profileTable.tokens[token] = true
+	w.Header().Set("X-CSRF-Token", token)
 
 	type AnswerLogin struct {
 		Exist bool   `json:"status"` // not use yet
@@ -353,21 +371,18 @@ func (api *ProfileHandler) GetAvatarFromUser(w http.ResponseWriter, r *http.Requ
 	}
 	println("Кто-то загружает аватар")
 
-	/* кука не идет вместе с фоткой
 	authorized, userlogin := api.isAuthorize(r)
 	if !authorized {
 		http.Error(w, ``, 403)
 		return
 	}
-	*/
 
-	userlogin := "userNameFromCookie"
-	println(userlogin, " загружает аватар")
+	println(api.profileTable.mapUser[userlogin].email, " загружает аватар")
 
 	r.ParseMultipartForm(10000)
 	fileAvatar, _, errFirmFile := r.FormFile("avatar")
 	if errFirmFile != nil {
-		println("ERROR:", string(errFirmFile.Error()))
+		println("ERROR:", errFirmFile.Error())
 		http.Error(w, ``, 405)
 		return
 	}
@@ -379,6 +394,166 @@ func (api *ProfileHandler) GetAvatarFromUser(w http.ResponseWriter, r *http.Requ
 
 }
 
+func (api *ProfileHandler) SendAvatarToUser(w http.ResponseWriter, r *http.Request) {
+	if (*r).Method != "GET" {
+		return
+	}
+	println("Кто-то скачивает свой аватар")
+	defaultPath := "./avatars/defaultAva.png"
+
+	authorized, userlogin := api.isAuthorize(r)
+	if !authorized {
+		http.Error(w, ``, 403)
+		return
+	}
+
+	println(userlogin, " скачивает аватар")
+	fileName := "./avatars/" + userlogin + "ava.png"
+	println("FILE NAME:", fileName)
+
+	fileAvatar, err := os.Open(fileName)
+	defer fileAvatar.Close()
+	if err != nil {
+		fileAvatar, _ = os.Open(defaultPath)
+		//w.WriteHeader(http.StatusNotFound)
+		//return
+	}
+	defer fileAvatar.Close()
+
+	FileHeader := make([]byte, 512)
+	fileAvatar.Read(FileHeader)
+
+	FileContentType := http.DetectContentType(FileHeader)
+
+	FileStat, _ := fileAvatar.Stat()
+	FileSize := strconv.FormatInt(FileStat.Size(), 10)
+
+	w.Header().Set("Content-Disposition", "attachment; filename="+fileName)
+	w.Header().Set("Content-Type", FileContentType)
+	w.Header().Set("Content-Length", FileSize)
+
+	fileAvatar.Seek(0, 0)
+	io.Copy(w, fileAvatar)
+
+	println("END SEND FILE!")
+
+}
+
+func (api *ProfileHandler) SendTasks(w http.ResponseWriter, r *http.Request) {
+
+	if (*r).Method != "POST" {
+		return
+	}
+	println("Кто-то хочет получить таски")
+
+	authorized, _ := api.isAuthorize(r)
+	if !authorized {
+		println("Неавторизированный пользователь пытается загрузить таски")
+		http.Error(w, ``, 403)
+		return
+	}
+
+	isOK := true
+	body, errRead := ioutil.ReadAll(r.Body)
+	if errRead != nil {
+		println("SIGN IN: err Read user body")
+		isOK = false
+	}
+
+	type TaskRequestInput struct {
+		Numberoftask int `json:"numberoftask"`
+	}
+
+	taskRequest := new(TaskRequestInput)
+	errUnmarshal := json.Unmarshal(body, taskRequest)
+	if errUnmarshal != nil {
+		println("TASKS: err Unmarshal user body")
+		http.Error(w, ``, 400)
+		return
+	}
+
+	println("I need get:", taskRequest.Numberoftask)
+	tasksFromTable, errGetTask := api.taskTable.GetTasks(taskRequest.Numberoftask)
+	if errGetTask != nil {
+		println("Не удалось получить таски")
+		http.Error(w, ``, 500)
+	}
+
+	jsonTasks, err := json.Marshal(tasksFromTable)
+	if err != nil {
+		println("Err tasks marshal")
+		isOK = false
+	}
+	if !isOK {
+		http.Error(w, `{"id":"-500"}`, 500)
+		return
+	}
+
+	_, errWrite := w.Write(jsonTasks)
+	if errWrite != nil {
+		println("Err write in Login")
+	}
+
+	println("SEND TASKS")
+
+}
+
+func (api *ProfileHandler) SendOneTask(w http.ResponseWriter, r *http.Request) {
+	if (*r).Method != "POST" {
+		return
+	}
+	println("Кто-то хочет получить конкретный такс")
+
+	authorized, _ := api.isAuthorize(r)
+	if !authorized {
+		println("Неавторизированный пользователь пытается загрузить задание")
+		http.Error(w, ``, 403)
+		return
+	}
+
+	isOK := true
+	body, errRead := ioutil.ReadAll(r.Body)
+	if errRead != nil {
+		println("SIGN IN: err Read user body")
+		isOK = false
+	}
+
+	type TaskRequestInput struct {
+		TaskId int `json:"taskId"`
+	}
+
+	taskRequest := new(TaskRequestInput)
+	errUnmarshal := json.Unmarshal(body, taskRequest)
+	if errUnmarshal != nil {
+		println("one task err Unmarshal user body")
+		http.Error(w, ``, 400)
+		return
+	}
+
+	task, errGetOneTask := api.taskTable.GetOneTask(taskRequest.TaskId)
+	if errGetOneTask != nil {
+		http.Error(w, `not found task by id`, 400)
+		return
+	}
+
+	jsonTask, err := json.Marshal(task)
+	if err != nil {
+		println("Err one task marshal")
+		isOK = false
+	}
+	if !isOK {
+		http.Error(w, `{"id":"-500"}`, 500)
+		return
+	}
+
+	_, errWrite := w.Write(jsonTask)
+	if errWrite != nil {
+		println("Err write in Login")
+	}
+
+	println("SEND ONE TASK")
+}
+
 func main() {
 
 	//@todo  Добавить риид онли мютексы на только чтение
@@ -387,7 +562,10 @@ func main() {
 
 	api := &ProfileHandler{
 		profileTable: NewProfileTable(),
+		taskTable:    NewTaskTable(),
 	}
+
+	api.taskTable.SetSomeStartTask()
 
 	// js api
 	r.HandleFunc("/registration", api.Registration)
@@ -396,7 +574,11 @@ func main() {
 	r.HandleFunc("/getuser", api.GetUserData)
 	r.HandleFunc("/changeprofile", api.ChangeProfile)
 
-	r.HandleFunc("/getavatar", api.GetAvatarFromUser)
+	r.HandleFunc("/sendAvatar", api.GetAvatarFromUser)
+	r.HandleFunc("/getAvatar{*}", api.SendAvatarToUser)
+
+	r.HandleFunc("/getTasks", api.SendTasks)
+	r.HandleFunc("/getOneTask", api.SendOneTask)
 
 	log.Println("start serving :8080")
 	errListen := http.ListenAndServe(":8080", CORSMiddleware(r))
