@@ -114,7 +114,8 @@ func (profTable *ProfileTable) ChangeProfile(login string, newPassword string, n
 		profTable.mapUserEmail[newEmail].password = newPassword
 		newUser.password = newPassword
 	}
-
-	delete(profTable.mapUserEmail, email)
+	if email != newEmail {
+		delete(profTable.mapUserEmail, email)
+	}
 	return newUser, nil
 }
