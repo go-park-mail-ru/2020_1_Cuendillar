@@ -25,7 +25,7 @@ type ProfileHandler struct {
 
 func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		allowedHeaders := "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization"
+		allowedHeaders := "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization, X-CSRF-Token"
 		w.Header().Set("Content-Type", "*")
 		w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
@@ -192,7 +192,7 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	someSecret := "hello world=)"
 	token := shaHash([]byte(cookie.Value + user.email + someSecret))
 
-	api.profileTable.tokens[token] = true
+	api.profileTable.tokens[user.login] = token
 	w.Header().Set("X-CSRF-Token", token)
 
 	type AnswerLogin struct {
@@ -200,6 +200,7 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		Id    uint   `json:"id"`
 		Login string `json:"login"`
 		Email string `json:"email"`
+		Token string `json:"token"`
 	}
 
 	answerLogin := new(AnswerLogin)
@@ -207,6 +208,7 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	answerLogin.Email = user.email
 	answerLogin.Id = user.id
 	answerLogin.Exist = true
+	answerLogin.Token = token
 	jsonData, err := json.Marshal(answerLogin)
 	if err != nil && !isOK {
 		println("Err singIN marshal")
@@ -260,10 +262,12 @@ func (api *ProfileHandler) GetUserData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	println("Кто-то запрашивает данные пользователя по куке")
 	type UserDataAnswer struct {
 		Id    uint   `json:"id"`
 		Login string `json:"login"`
 		Email string `json:"email"`
+		Token string `json:"token"`
 	}
 
 	authorized, userlogin := api.isAuthorize(r)
@@ -281,7 +285,9 @@ func (api *ProfileHandler) GetUserData(w http.ResponseWriter, r *http.Request) {
 		userAnswer.Id = user.id
 		userAnswer.Login = user.login
 		userAnswer.Email = user.email
+		userAnswer.Token = api.profileTable.tokens[user.login]
 	}
+
 	println("return user data::login:", userAnswer.Login)
 	jsonData, err := json.Marshal(userAnswer)
 	if err != nil {
@@ -321,6 +327,7 @@ func (api *ProfileHandler) ChangeProfile(w http.ResponseWriter, r *http.Request)
 	type ChangeInput struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
+		Token    string `json:"token"`
 	}
 
 	ChangeTry := new(ChangeInput)
@@ -329,6 +336,14 @@ func (api *ProfileHandler) ChangeProfile(w http.ResponseWriter, r *http.Request)
 		println("SIGN IN: err Unmarshal user body")
 		isOK = false
 	}
+
+	println("GET USER TOKEN:", ChangeTry.Token)
+	if api.profileTable.tokens[userlogin] != ChangeTry.Token {
+		println("Неавторизированный пользователь пытается менять что-то (неверный токен)")
+		http.Error(w, ``, 403)
+		return
+	}
+
 	println("Изменить логин на", ChangeTry.Email)
 	changedUser, errChange := api.profileTable.ChangeProfile(userlogin, ChangeTry.Password, ChangeTry.Email)
 	if errChange != nil {
@@ -373,6 +388,12 @@ func (api *ProfileHandler) GetAvatarFromUser(w http.ResponseWriter, r *http.Requ
 
 	authorized, userlogin := api.isAuthorize(r)
 	if !authorized {
+		http.Error(w, ``, 403)
+		return
+	}
+
+	token := r.Header.Get("X-Csrf-Token") // bad token
+	if token != api.profileTable.tokens[userlogin] {
 		http.Error(w, ``, 403)
 		return
 	}
@@ -572,9 +593,9 @@ func main() {
 	r.HandleFunc("/signin", api.SignIn)
 	r.HandleFunc("/logout", api.LogOut)
 	r.HandleFunc("/getuser", api.GetUserData)
-	r.HandleFunc("/changeprofile", api.ChangeProfile)
+	r.HandleFunc("/changeprofile", api.ChangeProfile) // token ok
 
-	r.HandleFunc("/sendAvatar", api.GetAvatarFromUser)
+	r.HandleFunc("/sendAvatar", api.GetAvatarFromUser) // token ok
 	r.HandleFunc("/getAvatar{*}", api.SendAvatarToUser)
 
 	r.HandleFunc("/getTasks", api.SendTasks)

@@ -16,8 +16,8 @@ type Profile struct {
 type ProfileTable struct {
 	mapUser      map[string]*Profile
 	mapUserEmail map[string]*Profile
-	sessions     map[string]string // [token]login
-	tokens       map[string]bool
+	sessions     map[string]string // [session_token]login
+	tokens       map[string]string // [login] token
 	mu           sync.RWMutex
 	nextID       uint
 }
@@ -28,7 +28,7 @@ func NewProfileTable() *ProfileTable {
 		mapUser:      make(map[string]*Profile), // fast login
 		mapUserEmail: make(map[string]*Profile), // fast email
 		sessions:     make(map[string]string),
-		tokens:       make(map[string]bool),
+		tokens:       make(map[string]string),
 	}
 }
 
@@ -114,5 +114,7 @@ func (profTable *ProfileTable) ChangeProfile(login string, newPassword string, n
 		profTable.mapUserEmail[newEmail].password = newPassword
 		newUser.password = newPassword
 	}
+
+	delete(profTable.mapUserEmail, email)
 	return newUser, nil
 }
