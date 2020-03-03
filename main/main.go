@@ -171,7 +171,7 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !isOK {
-		http.Error(w, `{"id":"-500"}`, 500)
+		http.Error(w, `{"id":"-500"}`, 400)
 		println("error set cookie")
 		return
 	}
@@ -215,7 +215,7 @@ func (api *ProfileHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		isOK = false
 	}
 	if !isOK {
-		http.Error(w, `{"id":"-500"}`, 500)
+		http.Error(w, `{"id":"-500"}`, 400)
 		return
 	}
 	_, errWrite := w.Write(jsonData)
